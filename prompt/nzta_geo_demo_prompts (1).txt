@@ -1,0 +1,223 @@
+NZTA GEOSPATIAL DEMO — LLM PROMPT SEQUENCE
+==========================================
+For use in Databricks e2 field engineering workspace
+Run prompts in order. Complete Prompt 1 prerequisites before starting.
+
+PRE-REQUISITE: LINZ API KEY SETUP
+----------------------------------
+1. Create free account at data.linz.govt.nz
+2. Generate API key under your profile settings
+3. In your Databricks workspace CLI run:
+      databricks secrets create-scope linz
+      databricks secrets put-secret linz api_key
+   Or via UI: Settings > Secrets > Create scope 'linz', key 'api_key'
+Everything downstream depends on this being in place first.
+
+
+==========================================
+PROMPT 1 — WORKSPACE SETUP AND SECRETS
+==========================================
+
+I'm working in a Databricks e2 field engineering workspace.
+Create a Databricks notebook (Python) that:
+1. Creates a catalog called 'nzta_geo_demo' and schema called 'linz' if they don't exist
+2. Reads a LINZ API key from Databricks secrets scope 'linz', key 'api_key'
+3. Confirms the Unity Catalog setup is correct by listing tables
+4. Installs required libraries: geopandas, keplergl, h3, requests
+Note: use spark.sql for catalog/schema creation, dbutils.secrets for the key
+
+
+==========================================
+PROMPT 2 — LINZ INGESTION NOTEBOOK
+==========================================
+
+Create a Databricks Python notebook that ingests NZ road centrelines and address
+points from the LINZ Data Service WFS API into Delta tables.
+
+Requirements:
+- LINZ API key from dbutils.secrets.get(scope='linz', key='api_key')
+- Ingest NZ Roads (layer-3383) filtered to Wellington bbox:
+  174.5,-41.5,175.0,-41.0, EPSG:4326
+- Ingest NZ Addresses (layer-123113) same bbox
+- Ingest NZ Localities/suburbs (layer-113761) same bbox
+- Handle WFS pagination (maxFeatures=1000, startIndex incrementing)
+  since WFS responses are capped
+- Parse GeoJSON response with geopandas
+- Store geometry as WKT string column called 'geom_wkt' plus
+  retain all attribute columns
+- Write each as Delta table:
+    nzta_geo_demo.linz.road_centrelines
+    nzta_geo_demo.linz.address_points
+    nzta_geo_demo.linz.localities
+- Add ingestion_timestamp column
+- Print row counts on completion
+
+
+==========================================
+PROMPT 3 — SPATIAL SQL NOTEBOOK
+==========================================
+
+Create a Databricks SQL notebook that runs spatial queries against the LINZ
+Delta tables ingested in the previous step.
+
+Tables available:
+- nzta_geo_demo.linz.road_centrelines (geom_wkt STRING, road_name STRING,
+  road_type STRING)
+- nzta_geo_demo.linz.address_points (geom_wkt STRING, full_address STRING,
+  suburb_locality STRING)
+- nzta_geo_demo.linz.localities (geom_wkt STRING, name STRING)
+
+Write the following queries using Databricks Spatial SQL (ST_ functions,
+GEOMETRY type):
+
+Query 1: Cast WKT to geometry type and count roads by road_type
+
+Query 2: Find all address points within 200 metres of a road
+centred on Wellington CBD (ST_DISTANCE or ST_BUFFER + ST_INTERSECTS)
+
+Query 3: Count addresses per locality using ST_INTERSECTS spatial join
+between address_points and localities
+
+Query 4: Find the 10 longest road centrelines by ST_LENGTH
+
+Add markdown cells explaining what each query demonstrates and
+why it's relevant to a road network operator like NZTA.
+
+
+==========================================
+PROMPT 4 — H3 INDEXING NOTEBOOK
+==========================================
+
+Create a Databricks Python notebook that adds H3 indexing to the LINZ
+road and address data for scalable spatial analytics.
+
+Source tables:
+- nzta_geo_demo.linz.road_centrelines
+- nzta_geo_demo.linz.address_points
+
+Requirements:
+- For address_points: extract lat/lon from geom_wkt using geopandas,
+  compute H3 cell at resolution 9 using h3.geo_to_h3(), add as column 'h3_r9'
+- For road_centrelines: tessellate each linestring geometry to H3 cells
+  at resolution 9 using h3.polyfill or h3_linestring approach,
+  explode to one row per H3 cell
+- Write enriched tables as:
+    nzta_geo_demo.linz.address_points_h3
+    nzta_geo_demo.linz.road_centrelines_h3
+- Run a Databricks SQL query using h3_longlatash3() and GROUP BY h3 cell
+  to count address density per cell
+- Show how H3 join between addresses and roads is faster than ST_INTERSECTS
+  with a %timeit comparison on the Wellington dataset
+
+
+==========================================
+PROMPT 5 — DYNAMIC SEGMENTATION NOTEBOOK
+==========================================
+
+Create a Databricks Python notebook demonstrating dynamic segmentation
+on NZ road data — the pattern of joining attribute datasets to road
+centrelines by spatial overlap.
+
+This mirrors what NZTA does in ArcGIS for pavement condition, speed zones,
+and asset management.
+
+Source tables:
+- nzta_geo_demo.linz.road_centrelines (geom_wkt, road_name, road_type)
+- nzta_geo_demo.linz.localities (geom_wkt, name)
+
+Steps:
+1. Use ST_INTERSECTS to join road centrelines to locality polygons —
+   which roads pass through which localities
+2. Synthesise a simple 'condition_score' attribute (random int 1-5 per
+   road segment) to simulate pavement condition data
+3. Join condition scores to road segments and aggregate mean condition
+   per locality using GROUP BY
+4. Show the result schema: road_name, locality, condition_score,
+   geom_wkt — this is the gold layer pattern
+5. Write result to nzta_geo_demo.linz.road_condition_by_locality as
+   a Delta table
+6. Add a markdown cell explaining how this pattern maps to NZTA's
+   actual AAM use case: replace synthetic condition_score with real
+   pavement roughness IRI values once data is migrated to UC
+
+
+==========================================
+PROMPT 6 — KEPLER.GL VISUALISATION NOTEBOOK
+==========================================
+
+Create a Databricks Python notebook that visualises the NZTA demo
+data using Kepler.gl inside a Databricks notebook.
+
+Source tables:
+- nzta_geo_demo.linz.road_centrelines
+- nzta_geo_demo.linz.address_points
+- nzta_geo_demo.linz.road_condition_by_locality
+
+Requirements:
+- Install keplergl: %pip install keplergl
+- Load each table as a pandas/geopandas dataframe
+- Convert geom_wkt back to geometry using geopandas
+- Create a Kepler.gl map with three layers:
+    Layer 1: road centrelines as LineString layer, coloured by road_type
+    Layer 2: address points as Point layer
+    Layer 3: road_condition_by_locality as LineString layer,
+              coloured by condition_score (green=good, red=poor)
+- Set initial map centre to Wellington (-41.28, 174.78), zoom 11
+- Render inline using map._repr_html_() and displayHTML()
+- Add a markdown cell noting this is the same visualisation pattern
+  used in the TfNSW vehicle delay analysis in the Geospatial Overview deck
+
+
+==========================================
+PROMPT 7 — GENIE SPACE SETUP
+==========================================
+
+Write the configuration steps and sample questions to set up a
+Databricks Genie Space over the NZTA demo gold tables.
+
+Tables to register in Genie:
+- nzta_geo_demo.linz.road_centrelines
+- nzta_geo_demo.linz.road_condition_by_locality
+- nzta_geo_demo.linz.address_points_h3
+
+For each table provide:
+1. The Genie-friendly table description to add in Unity Catalog
+2. Three example natural language questions a road manager would ask
+3. The SQL Genie should generate for each question
+4. Any trusted assets or instructions to add to the Genie space
+   to handle geometry columns correctly
+   (Genie should query attributes, not render WKT directly)
+
+Frame the output as setup instructions you would hand to
+a NZTA business analyst to configure the space themselves.
+
+
+==========================================
+PROMPT 8 — TRAINING GUIDE README
+==========================================
+
+Write a training guide README.md for the NZTA Geospatial Demo
+Databricks notebooks.
+
+Structure:
+- Overview: what the demo shows and why it matters for NZTA
+- Prerequisites: Databricks workspace access, LINZ API key setup
+  instructions (how to create free account at data.linz.govt.nz,
+  generate API key, store in Databricks secrets)
+- Notebook run order with one-line description of each
+- Key concepts explained simply:
+  Delta table, Unity Catalog, ST_ functions, H3 indexing,
+  dynamic segmentation — each in 2-3 sentences for a GIS analyst
+  audience, not a data engineer
+- How to extend: swap Wellington bbox for another NZ region,
+  swap synthetic condition scores for real NZTA pavement data
+- How this maps to production: the path from this demo to
+  NZTA's AAM UC migration
+
+Audience is a NZTA GIS analyst or road asset manager who knows
+ArcGIS well but has not used Databricks before.
+
+
+==========================================
+END OF PROMPT SEQUENCE
+==========================================
