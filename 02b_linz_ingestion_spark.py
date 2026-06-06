@@ -144,38 +144,38 @@ def fetch_linz_layer_spark(layer_id, layer_name, bbox, api_key, max_features=100
         print(f"  Warning: No features retrieved for {layer_name}")
         return None
 
-    # Convert to GeoJSON FeatureCollection
+    # Write GeoJSON FeatureCollection to UC Volume (accessible from Spark on USER_ISOLATION)
     feature_collection = {
         "type": "FeatureCollection",
         "features": all_features
     }
 
-    # Write to temporary file for Spark to read
-    # This is a single-node operation but acceptable because we're writing aggregated API response
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.geojson', delete=False) as tmp_file:
-        json.dump(feature_collection, tmp_file)
-        tmp_path = tmp_file.name
+    spark.sql(f"CREATE VOLUME IF NOT EXISTS {catalog}.{schema}.staging")
+    volume_path = f"/Volumes/{catalog}/{schema}/staging/{layer_id}.geojson"
+    with open(volume_path, 'w') as f:
+        json.dump(feature_collection, f)
 
-    # Read GeoJSON using Spark distributed JSON reader
-    # Spark will parse the JSON in parallel across executors
-    df = spark.read.option("multiline", "true").json(tmp_path)
+    # Read GeoJSON using Spark distributed JSON reader from Volume
+    df = spark.read.option("multiline", "true").json(volume_path)
 
     # Extract features array into individual rows
-    features_df = df.select("features").select(col("features").alias("feature_array"))
-    exploded_df = features_df.select(explode(col("feature_array")).alias("feature"))
+    exploded_df = df.select(explode(col("features")).alias("feature"))
 
-    # Extract geometry and properties
-    # Use Spark SQL to unnest the structure
+    # Extract geometry as JSON string and flatten properties
     result_df = exploded_df.select(
-        col("feature.geometry").alias("geometry_json"),
+        to_json(col("feature.geometry")).alias("geometry_json"),
         col("feature.properties.*")
     )
 
-    print(f"✓ Loaded {result_df.count()} features into Spark DataFrame")
+    # Cache and materialize before deleting staging file
+    # (otherwise downstream operations fail trying to re-read deleted source)
+    result_df = result_df.cache()
+    row_count = result_df.count()
+    print(f"✓ Loaded {row_count:,} features into Spark DataFrame")
 
-    # Clean up temp file
+    # Clean up staging file
     import os
-    os.unlink(tmp_path)
+    os.remove(volume_path)
 
     return result_df
 
@@ -191,7 +191,7 @@ roads_df = fetch_linz_layer_spark(
     layer_id='layer-3383',
     layer_name='NZ Road Centrelines',
     bbox=bbox,
-    api_key=linz_api_key
+    api_key=linz_api_key.strip()
 )
 
 if roads_df is not None:
@@ -207,7 +207,7 @@ if roads_df is not None:
     roads_with_geom = spark.sql("""
         SELECT
             *,
-            ST_ASWKT(ST_GEOMFROMGEOJSON(to_json(geometry_json))) as geom_wkt,
+            ST_ASWKT(ST_GEOMFROMGEOJSON(geometry_json)) as geom_wkt,
             current_timestamp() as ingestion_timestamp
         FROM roads_staging
     """)
@@ -216,7 +216,7 @@ if roads_df is not None:
     roads_final = roads_with_geom.drop("geometry_json")
 
     # Write to Delta table using Spark
-    roads_final.write.format("delta").mode("overwrite").saveAsTable(
+    roads_final.write.format("delta").mode("overwrite").option("overwriteSchema", "true").saveAsTable(
         f"{catalog}.{schema}.road_centrelines"
     )
 
@@ -235,7 +235,7 @@ addresses_df = fetch_linz_layer_spark(
     layer_id='layer-123113',
     layer_name='NZ Address Points',
     bbox=bbox,
-    api_key=linz_api_key
+    api_key=linz_api_key.strip()
 )
 
 if addresses_df is not None:
@@ -249,7 +249,7 @@ if addresses_df is not None:
     addresses_with_geom = spark.sql("""
         SELECT
             *,
-            ST_ASWKT(ST_GEOMFROMGEOJSON(to_json(geometry_json))) as geom_wkt,
+            ST_ASWKT(ST_GEOMFROMGEOJSON(geometry_json)) as geom_wkt,
             current_timestamp() as ingestion_timestamp
         FROM addresses_staging
     """)
@@ -258,7 +258,7 @@ if addresses_df is not None:
     addresses_final = addresses_with_geom.drop("geometry_json")
 
     # Write to Delta using Spark
-    addresses_final.write.format("delta").mode("overwrite").saveAsTable(
+    addresses_final.write.format("delta").mode("overwrite").option("overwriteSchema", "true").saveAsTable(
         f"{catalog}.{schema}.address_points"
     )
 
@@ -274,10 +274,10 @@ if addresses_df is not None:
 
 # Fetch localities (layer-113761)
 localities_df = fetch_linz_layer_spark(
-    layer_id='layer-113761',
-    layer_name='NZ Localities',
+    layer_id='layer-113764',
+    layer_name='NZ Suburbs and Localities',
     bbox=bbox,
-    api_key=linz_api_key
+    api_key=linz_api_key.strip()
 )
 
 if localities_df is not None:
@@ -291,7 +291,7 @@ if localities_df is not None:
     localities_with_geom = spark.sql("""
         SELECT
             *,
-            ST_ASWKT(ST_GEOMFROMGEOJSON(to_json(geometry_json))) as geom_wkt,
+            ST_ASWKT(ST_GEOMFROMGEOJSON(geometry_json)) as geom_wkt,
             current_timestamp() as ingestion_timestamp
         FROM localities_staging
     """)
@@ -300,7 +300,7 @@ if localities_df is not None:
     localities_final = localities_with_geom.drop("geometry_json")
 
     # Write to Delta using Spark
-    localities_final.write.format("delta").mode("overwrite").saveAsTable(
+    localities_final.write.format("delta").mode("overwrite").option("overwriteSchema", "true").saveAsTable(
         f"{catalog}.{schema}.localities"
     )
 
