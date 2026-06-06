@@ -95,6 +95,48 @@ Execute notebooks in the following order. Each notebook implements a specific st
 
 **Total implementation time:** Approximately 40 minutes
 
+### Production-Grade Spark-Native Notebooks
+
+For production deployments and national-scale datasets, use the Spark-native implementations:
+
+| Notebook | Replaces | Key Advantages | Recommended For |
+|----------|----------|----------------|-----------------|
+| 02b_linz_ingestion_spark.py | 02_linz_ingestion.py | Pure Spark processing, no GeoPandas bottleneck, uses ST_GEOMFROMGEOJSON() | National coverage, millions of features |
+| 04b_h3_indexing_spark.py | 04_h3_indexing.py | Databricks H3_LONGLATASH3() SQL function, distributed processing | Large-scale spatial joins, time-series analysis |
+
+**Production Implementation Differences:**
+
+**LINZ Ingestion (02b):**
+- Uses `requests` library for WFS API calls (standard Python library)
+- Parses GeoJSON responses to Spark DataFrame via `spark.read.json()`
+- Leverages `ST_GEOMFROMGEOJSON()` for native Spark SQL geometry parsing
+- All data processing in Spark distributed engine
+- No single-node GeoPandas dependency for data transformation
+- Suitable for full national coverage ingestion
+
+**H3 Indexing (04b):**
+- Uses Databricks built-in `H3_LONGLATASH3()` SQL function
+- Eliminates Python UDF overhead - pure SQL expressions
+- Leverages Spark SQL for linestring tessellation (ST_STARTPOINT, ST_ENDPOINT, ST_CENTROID)
+- All H3 operations execute in distributed Spark engine
+- Supports advanced H3 operations: H3_KRING, H3_DISTANCE, H3_TOPARENT, H3_TOCHILDREN
+- Enables Z-ORDER optimization and partition pruning on H3 columns
+
+**When to Use Each Version:**
+
+**Prototype/Development Notebooks (02, 04):**
+- Regional datasets (1-10K features)
+- Rapid prototyping and exploration
+- Interactive development with GeoPandas
+- Training and demonstration purposes
+
+**Production Notebooks (02b, 04b):**
+- National-scale datasets (100K+ features)
+- Automated pipeline execution
+- Performance-critical applications
+- Multi-cluster parallel processing
+- Time-series spatial analytics at scale
+
 ---
 
 ## Technical Architecture Components
