@@ -1,428 +1,437 @@
-# NZTA Geospatial Demo - Training Guide
+# NZTA Geospatial Analytics on Databricks
 
-Welcome to the NZTA Geospatial Demo for Databricks! This repository demonstrates how New Zealand Transport Agency (NZTA) can leverage Databricks Unity Catalog for road network analysis, asset management, and geospatial analytics.
+## Executive Summary
 
-## Overview
+This reference implementation demonstrates geospatial analytics capabilities for New Zealand Transport Agency (NZTA) using Databricks Lakehouse Platform. The solution showcases Unity Catalog for enterprise data governance, Delta Lake for reliable storage, and SQL-based spatial operations for road network analysis and asset management.
 
-This demo showcases a complete geospatial analytics workflow using open data from Land Information New Zealand (LINZ):
+**Solution Components:**
+- Automated data ingestion from LINZ Data Service WFS API
+- Spatial SQL analytics using Databricks ST_ functions
+- H3 hexagonal spatial indexing for performant large-scale joins
+- Dynamic segmentation pattern for asset attribute enrichment
+- Interactive visualization using Kepler.gl
+- Natural language query interface via Databricks Genie
 
-- **Data ingestion** from LINZ Data Service WFS API
-- **Spatial SQL queries** for road network analysis
-- **H3 hexagonal indexing** for scalable spatial joins
-- **Dynamic segmentation** for asset attribute management (pavement condition)
-- **Interactive visualization** with Kepler.gl
-- **Natural language queries** using Databricks Genie
+**Business Value:**
 
-**Why this matters for NZTA:**
+NZTA manages over 11,000 km of State Highway network requiring continuous monitoring of asset condition, traffic patterns, and maintenance priorities. This solution demonstrates how Databricks can augment or replace traditional GIS tooling for:
 
-NZTA manages 11,000+ km of State Highways and needs to analyze asset condition, traffic patterns, and maintenance priorities across the entire network. This demo shows how Databricks Unity Catalog can replace or complement traditional GIS tools (like ArcGIS) for:
+- Pavement condition tracking and predictive deterioration modeling
+- Safety analytics including crash hotspot identification
+- Traffic flow analysis and congestion pattern detection
+- Asset inventory management (bridges, culverts, signage)
+- Capital expenditure planning and budget allocation
+- Contractor performance monitoring and compliance
 
-- Pavement condition tracking and deterioration modeling
-- Crash hotspot analysis and safety interventions
-- Traffic flow analysis and congestion management
-- Bridge and culvert asset inventory
-- Capital works planning and budgeting
+---
+
+## Architecture Overview
+
+**Data Sources:**
+- Land Information New Zealand (LINZ) WFS API for road network, address points, and administrative boundaries
+
+**Platform:**
+- Databricks Lakehouse on Azure/AWS/GCP
+- Unity Catalog for data governance and lineage
+- Delta Lake for ACID-compliant storage
+- Photon-accelerated SQL warehouses for query performance
+
+**Key Technologies:**
+- Databricks SQL with geospatial functions (ST_DISTANCE, ST_INTERSECTS, ST_LENGTH)
+- H3 spatial indexing library for hierarchical hexagonal grids
+- Python libraries: GeoPandas, Shapely, Requests
+- Visualization: Kepler.gl for interactive geospatial exploration
+- AI: Databricks Genie for conversational analytics
 
 ---
 
 ## Prerequisites
 
-### 1. Databricks Workspace Access
+### Databricks Workspace Requirements
 
-You need access to a Databricks workspace (e2 field engineering workspace or equivalent) with:
+Access to a Databricks workspace with the following capabilities:
+- Unity Catalog enabled with CREATE CATALOG permissions
+- Serverless SQL warehouse or Pro SQL warehouse
+- Notebook execution environment (Python and SQL)
+- Databricks Assistant/Genie enabled (for natural language queries)
 
-- Unity Catalog enabled
-- Ability to create catalogs and schemas
-- Python notebook support
-- SQL notebook support
+Contact your Databricks account team if workspace provisioning is required.
 
-If you don't have access, contact your Databricks administrator or solution architect.
+### External Data Access
 
-### 2. LINZ API Key Setup
+**LINZ API Credentials:**
 
-The demo ingests data from Land Information New Zealand (LINZ). You'll need a free API key:
+This solution ingests open geospatial data from Land Information New Zealand. Registration is free.
 
-**Step 1: Create LINZ Account**
-1. Go to [https://data.linz.govt.nz](https://data.linz.govt.nz)
-2. Click **Sign Up** (top right)
-3. Create a free account using your work email
+1. Create account at https://data.linz.govt.nz
+2. Navigate to profile settings and generate API key
+3. Store credentials in Databricks Secrets:
 
-**Step 2: Generate API Key**
-1. Log in to your LINZ account
-2. Click your profile icon → **My API Keys**
-3. Click **Create API Key**
-4. Give it a name (e.g., "Databricks NZTA Demo")
-5. Copy the generated key (you'll need this in Step 3)
-
-**Step 3: Store in Databricks Secrets**
-
-You need to store the API key securely in Databricks. Choose **one** of these methods:
-
-**Option A: Using Databricks CLI** (recommended)
 ```bash
-# Install Databricks CLI if you haven't already
-pip install databricks-cli
-
-# Configure authentication to your workspace
-databricks configure --token
-
-# Create secrets scope
+# Using Databricks CLI
 databricks secrets create-scope linz
-
-# Store your API key
 databricks secrets put-secret linz api_key
-# This will open a text editor - paste your API key, save, and close
 ```
 
-**Option B: Using Workspace UI**
-1. In Databricks workspace, click **Settings** (gear icon in sidebar)
-2. Click **Secrets** → **Create Scope**
-3. Scope name: `linz`
-4. Click **Create**
-5. Click **Add Secret**
-6. Key name: `api_key`
-7. Paste your LINZ API key in the value field
-8. Click **Add**
-
-✅ Once complete, your API key is securely stored and ready to use!
+Alternatively, configure secrets via Workspace UI under Settings > Secrets.
 
 ---
 
-## Notebook Run Order
+## Implementation Guide
 
-Run the notebooks in this sequence. Each notebook builds on the previous one:
+### Notebook Execution Sequence
 
-| # | Notebook | Description | Time |
-|---|----------|-------------|------|
-| 1 | `01_workspace_setup.py` | Create Unity Catalog structure (catalog/schema), validate secrets, install libraries | 3 min |
-| 2 | `02_linz_ingestion.py` | Ingest NZ roads, addresses, and localities from LINZ WFS API into Delta tables | 5-10 min |
-| 3 | `03_spatial_sql.sql` | Run spatial queries using ST_ functions (distance, intersection, length) | 5 min |
-| 4 | `04_h3_indexing.py` | Add H3 spatial indexing for fast aggregation and joins | 5 min |
-| 5 | `05_dynamic_segmentation.py` | Simulate pavement condition scoring by locality (asset attribute joining) | 5 min |
-| 6 | `06_kepler_visualization.py` | Visualize roads and condition scores on an interactive Kepler.gl map | 5 min |
-| 7 | `07_genie_space_setup.md` | Instructions to set up Databricks Genie for natural language queries | 10 min |
+Execute notebooks in the following order. Each notebook implements a specific stage of the analytics pipeline.
 
-**Total time:** ~40 minutes
+| Sequence | Notebook | Purpose | Expected Runtime |
+|----------|----------|---------|------------------|
+| 1 | 01_workspace_setup.py | Unity Catalog initialization, library installation, credential validation | 3 minutes |
+| 2 | 02_linz_ingestion.py | ETL pipeline for road centrelines, address points, localities from LINZ WFS | 5-10 minutes |
+| 3 | 03_spatial_sql.sql | Spatial query examples using ST_ functions | 5 minutes |
+| 4 | 04_h3_indexing.py | H3 spatial index generation and performance comparison | 5 minutes |
+| 5 | 05_dynamic_segmentation.py | Asset attribute enrichment using spatial joins (pavement condition use case) | 5 minutes |
+| 6 | 06_kepler_visualization.py | Interactive map generation with multi-layer rendering | 5 minutes |
+| 7 | 07_genie_space_setup.md | Conversational AI configuration for business user self-service | 10 minutes |
 
----
-
-## Key Concepts Explained (for GIS Analysts)
-
-### Delta Tables
-
-**What:** Delta Lake is an open-source storage format that brings reliability and performance to data lakes.
-
-**GIS equivalent:** Like a file geodatabase in ArcGIS, but:
-- Supports ACID transactions (no corrupt files from failed writes)
-- Handles time-travel (query data as it existed yesterday, last week, etc.)
-- Scales to petabyte-size datasets without performance degradation
-
-**Example:** Your road centrelines are stored as a Delta table at `nzta_geo_demo.linz.road_centrelines`.
-
-### Unity Catalog
-
-**What:** A unified governance layer for data, ML models, and AI assets across Databricks.
-
-**GIS equivalent:** Like an Enterprise Geodatabase with added data lineage, access control, and auditing.
-
-**Structure:**
-```
-Catalog (e.g., nzta_geo_demo)
-  └── Schema (e.g., linz)
-      └── Tables (e.g., road_centrelines, address_points)
-```
-
-**Benefits:** Fine-grained permissions, automatic data lineage, cross-workspace sharing.
-
-### ST_ Spatial Functions
-
-**What:** SQL functions for spatial operations like distance, intersection, buffering, length.
-
-**GIS equivalent:** Like geoprocessing tools in ArcGIS (Buffer, Intersect, Spatial Join), but expressed as SQL.
-
-**Common functions:**
-- `ST_GEOMFROMTEXT(wkt)` - Convert WKT string to geometry object
-- `ST_DISTANCE(geom1, geom2)` - Calculate distance between two geometries
-- `ST_INTERSECTS(geom1, geom2)` - Test if geometries overlap
-- `ST_LENGTH(geom)` - Calculate length of a linestring
-- `ST_BUFFER(geom, distance)` - Create buffer around a geometry
-
-**Example:**
-```sql
--- Find addresses within 200m of a road
-SELECT a.full_address, r.road_name
-FROM address_points a
-INNER JOIN road_centrelines r
-  ON ST_DISTANCE(
-      ST_GEOMFROMTEXT(a.geom_wkt),
-      ST_GEOMFROMTEXT(r.geom_wkt)
-     ) <= 200
-```
-
-### H3 Hexagonal Indexing
-
-**What:** A spatial indexing system that divides the Earth into hexagonal cells at multiple resolutions.
-
-**GIS equivalent:** Like a fishnet grid in ArcGIS, but with hexagons (better for distance analysis) and hierarchical (cells nest perfectly at different scales).
-
-**Why use H3:**
-- **Fast spatial joins:** Instead of computing intersections between complex geometries, you just match hexagon IDs (simple equality join)
-- **Consistent area:** All hexagons at the same resolution have roughly equal area
-- **Aggregation:** Easy to count features per cell for heatmaps
-
-**Resolution guide:**
-- Resolution 5: ~250 km² per hexagon (regional scale)
-- Resolution 7: ~5 km² per hexagon (city scale)
-- Resolution 9: ~0.1 km² per hexagon (neighborhood scale) ← **We use this**
-- Resolution 11: ~0.002 km² per hexagon (block scale)
-
-**Example:**
-```python
-# Assign each address to a hexagon
-h3_index = h3.geo_to_h3(latitude, longitude, resolution=9)
-```
-
-### Dynamic Segmentation
-
-**What:** The process of linking attribute data to linear features (roads) based on spatial relationships.
-
-**GIS equivalent:** In ArcGIS, you'd use linear referencing (route/measure) or spatial joins to assign attributes like pavement condition to road segments.
-
-**NZTA use cases:**
-- Pavement IRI (roughness) values → road segments
-- Speed limits → road sections
-- Crash records → road locations
-- Maintenance contracts → road zones
-
-**Pattern:**
-1. Spatial join: Match attribute data to road segments (ST_INTERSECTS)
-2. Enrich: Add attribute values to road geometries
-3. Aggregate: Roll up statistics by road, locality, or contract area
-4. Gold layer: Store enriched data for analysis
-
-### Kepler.gl Visualization
-
-**What:** An open-source web-based tool for visualizing large geospatial datasets.
-
-**GIS equivalent:** Like ArcGIS Online or QGIS, but designed for big data and interactive exploration in notebooks.
-
-**Features:**
-- Multiple layer types (points, lines, polygons, hexbins, arcs)
-- Color coding by attributes (e.g., condition score: red=poor, green=good)
-- Filtering and clustering
-- Exports to HTML, PNG, or JSON
-
-**When to use:**
-- Exploratory analysis (understanding spatial patterns)
-- Presentations (interactive demos for stakeholders)
-- Data quality checks (spot anomalies visually)
+**Total implementation time:** Approximately 40 minutes
 
 ---
 
-## How to Extend This Demo
+## Technical Architecture Components
 
-### 1. Change Geographic Extent
+### Unity Catalog Data Organization
 
-The demo uses Wellington as the sample area. To analyze another region:
+```
+Catalog: nzta_geo_demo
+  |
+  +-- Schema: linz
+      |
+      +-- road_centrelines (source layer)
+      +-- address_points (source layer)
+      +-- localities (source layer)
+      +-- road_centrelines_h3 (enriched with spatial index)
+      +-- address_points_h3 (enriched with spatial index)
+      +-- road_condition_by_locality (gold layer)
+```
 
-**In notebook `02_linz_ingestion.py`**, update the bounding box:
+**Governance Features:**
+- Fine-grained access control via Unity Catalog permissions
+- Automatic data lineage tracking
+- Audit logging for compliance
+- Cross-workspace data sharing capability
+
+### Delta Lake Storage
+
+All tables implement Delta Lake format providing:
+- ACID transaction guarantees
+- Schema evolution and enforcement
+- Time travel for historical analysis
+- Efficient upsert/merge operations
+- Automatic file compaction
+
+### Spatial Analytics Capabilities
+
+**Databricks Spatial SQL Functions:**
+- ST_GEOMFROMTEXT: Parse WKT geometry strings
+- ST_DISTANCE: Calculate geodetic distance between features
+- ST_INTERSECTS: Spatial predicate testing
+- ST_LENGTH: Measure linestring geometry
+- ST_BUFFER: Generate proximity zones
+- ST_AREA: Calculate polygon area
+
+**H3 Spatial Indexing:**
+
+Uber H3 provides hierarchical hexagonal grid system for efficient spatial operations:
+
+| Resolution | Cell Area | Use Case |
+|------------|-----------|----------|
+| 5 | ~250 km² | Regional aggregation |
+| 7 | ~5 km² | Metropolitan analysis |
+| 9 | ~0.1 km² | Urban/neighborhood scale (implemented) |
+| 11 | ~0.002 km² | Block-level precision |
+
+**Performance Benefits:**
+- Replaces expensive ST_INTERSECTS operations with simple equality joins
+- Enables distributed spatial aggregation at scale
+- Consistent cell area across geographies
+- Hierarchical relationship between resolutions
+
+### Dynamic Segmentation Pattern
+
+Linear referencing implementation for asset management:
+
+1. **Spatial Join:** Associate attribute data with road segments via ST_INTERSECTS
+2. **Attribute Enrichment:** Append asset characteristics to geometry
+3. **Aggregation:** Calculate statistics by road section, locality, or administrative boundary
+4. **Gold Layer:** Persist enriched dataset for downstream consumption
+
+**NZTA Application Examples:**
+- IRI (International Roughness Index) pavement condition scores
+- Posted speed limit zones
+- Crash incident attribution
+- Maintenance contract zones
+- Environmental constraint overlays
+
+---
+
+## Extending the Solution
+
+### Geographic Expansion
+
+Default implementation covers Wellington metropolitan area. To expand coverage:
+
+**Modify bounding box in 02_linz_ingestion.py:**
 
 ```python
-# Current Wellington bbox
+# Wellington (current)
 bbox = "174.5,-41.5,175.0,-41.0"
 
-# Example: Auckland bbox
+# Auckland
 bbox = "174.5,-37.0,175.0,-36.7"
 
-# Example: Christchurch bbox
+# Christchurch
 bbox = "172.4,-43.6,172.8,-43.4"
+
+# National coverage (full NZ)
+bbox = "165.0,-48.0,179.0,-33.0"
 ```
 
-### 2. Add Real NZTA Pavement Data
+Note: National-scale ingestion requires larger cluster and extended runtime.
 
-The demo uses synthetic condition scores (random 1-5 values). To use real IRI data:
+### Integrating Production NZTA Data
 
-**In notebook `05_dynamic_segmentation.py`**, replace the synthetic score generation with:
+**Pavement Condition Data:**
+
+Replace synthetic condition scores with actual IRI measurements:
 
 ```python
-# Load actual IRI data from your source (e.g., CSV, database, RAMM export)
-iri_data = spark.read.csv("path/to/iri_data.csv", header=True)
+# Load IRI survey data from source system
+iri_df = spark.read.format("delta").table("nzta_production.surveys.iri_measurements")
 
-# Join IRI to road centrelines by road ID or spatial join
-roads_with_iri = roads_df.join(iri_data, on="road_id")
-
-# Map IRI values to condition scores
-# Example: IRI < 2 = excellent (5), IRI 2-4 = good (4), etc.
-roads_with_condition = roads_with_iri.withColumn(
-    "condition_score",
-    when(col("iri") < 2, 5)
-    .when(col("iri") < 4, 4)
-    .when(col("iri") < 6, 3)
-    .when(col("iri") < 8, 2)
-    .otherwise(1)
-)
+# Spatial join to road network
+roads_with_iri = spark.sql("""
+    SELECT
+        r.road_id,
+        r.road_name,
+        r.geom_wkt,
+        i.iri_value,
+        i.survey_date,
+        CASE
+            WHEN i.iri_value < 2.0 THEN 5  -- Excellent
+            WHEN i.iri_value < 4.0 THEN 4  -- Good
+            WHEN i.iri_value < 6.0 THEN 3  -- Fair
+            WHEN i.iri_value < 8.0 THEN 2  -- Poor
+            ELSE 1  -- Very Poor
+        END as condition_score
+    FROM road_centrelines r
+    JOIN iri_measurements i ON ST_INTERSECTS(
+        ST_GEOMFROMTEXT(r.geom_wkt),
+        ST_GEOMFROMTEXT(i.geom_wkt)
+    )
+""")
 ```
 
-### 3. Add Time-Series Analysis
+**Additional LINZ Data Layers:**
 
-To track pavement deterioration over time:
+The LINZ Data Service provides 1000+ authoritative datasets. Recommended additions:
 
-1. Add a `survey_date` column to your IRI data
-2. Ingest multiple survey periods into separate tables or partitions
-3. Query trends:
+- Railway centrelines (layer-50329)
+- Hydrology/drainage networks (layer-50258)
+- Property boundaries (layer-50804)
+- Topographic contours
+- Building footprints
+
+Duplicate the ingestion pattern in notebook 02 with appropriate layer identifiers.
+
+### Time-Series Analysis
+
+Implement temporal analytics for condition deterioration modeling:
 
 ```sql
--- Show pavement deterioration for a specific road
+-- Trend analysis: pavement degradation by road segment
 SELECT
-  survey_date,
-  AVG(condition_score) as avg_score
-FROM road_condition_history
-WHERE road_name = 'State Highway 1'
-GROUP BY survey_date
-ORDER BY survey_date
+    road_id,
+    road_name,
+    survey_date,
+    AVG(iri_value) as avg_iri,
+    AVG(iri_value) - LAG(AVG(iri_value)) OVER (
+        PARTITION BY road_id ORDER BY survey_date
+    ) as iri_delta
+FROM iri_measurements
+WHERE road_type = 'State Highway'
+GROUP BY road_id, road_name, survey_date
+ORDER BY road_id, survey_date
 ```
 
-4. Build predictive models using Databricks ML to forecast future condition
-
-### 4. Add More LINZ Layers
-
-The LINZ Data Service has 1000+ layers. To add more:
-
-**Popular layers for NZTA:**
-- Bridges (layer ID TBD)
-- Railway centerlines (layer-50329)
-- Hydrology/culverts (layer-50258)
-- Property boundaries (layer-50804)
-
-**In notebook `02_linz_ingestion.py`**, duplicate the ingestion code block and change the layer ID:
-
-```python
-# Fetch railway centrelines
-railways_gdf = fetch_linz_layer(
-    layer_id='layer-50329',
-    layer_name='NZ Railway Centrelines',
-    bbox=bbox,
-    api_key=linz_api_key
-)
-
-save_to_delta(railways_gdf, 'railway_centrelines', catalog, schema)
-```
+Apply ML forecasting using Databricks AutoML or MLflow for predictive maintenance scheduling.
 
 ---
 
-## Mapping to NZTA Production (AAM UC Migration)
+## Production Migration Considerations
 
-This demo is a prototype. Here's how it maps to NZTA's production Asset Analytics Manager (AAM) migration to Unity Catalog:
+This demonstration provides a functional prototype. Production deployment requires additional enterprise capabilities:
 
-| Demo Component | Production Equivalent |
-|----------------|----------------------|
-| Wellington sample (2,000 roads) | National network (11,000+ km State Highways) |
-| LINZ road centrelines | NZTA road hierarchy + RAMM centerline data |
-| Synthetic condition scores | Historical IRI data from pavement surveys |
-| Single timestamp | Time-series data (quarterly surveys over 10+ years) |
-| 3 Delta tables | 100+ tables (crashes, traffic, assets, maintenance) |
-| Kepler.gl visualization | Power BI / Databricks SQL dashboards |
-| Genie demo space | Production Genie for regional managers |
+| Demo Component | Production Requirement |
+|----------------|------------------------|
+| Wellington sample dataset | National road network (11,000+ km State Highways) |
+| Manual notebook execution | Automated Delta Live Tables pipelines with SLA monitoring |
+| Public LINZ data | Integration with RAMM, traffic counters, contractor systems, weather data |
+| Synthetic condition scores | Historical IRI/SCRIM survey data with 10+ years temporal depth |
+| Single timestamp | Time-series partitioning strategy (monthly/quarterly) |
+| Basic Unity Catalog | Row-level security, attribute-based access control for regional visibility |
+| Ad-hoc queries | Scheduled dashboards, alerting, Power BI integration |
+| Development workspace | Production workspace with DR/HA, backup strategy |
 
-**Production requirements:**
-1. **Data ingestion pipelines:** Automate ingestion from RAMM, OneDrive, contractor systems
-2. **Data governance:** Implement row-level security (regional managers see only their roads)
-3. **Quality checks:** Validate geometry, detect outliers in IRI values
-4. **Integration:** Connect to Power BI, ArcGIS Online, or other BI tools
-5. **Scheduling:** Run nightly batch jobs to refresh gold tables
-6. **ML models:** Predict pavement deterioration, optimize maintenance schedules
+**Typical Migration Timeline:**
+- Planning and design: 4-6 weeks
+- Data pipeline development: 8-12 weeks
+- Governance implementation: 4-6 weeks
+- UAT and validation: 4-6 weeks
+- Production deployment: 2-4 weeks
 
-**Timeline:** This demo takes 40 minutes. Production migration typically takes 3-6 months depending on data complexity and governance requirements.
+**Total:** 6-9 months for full production implementation
 
 ---
 
 ## Troubleshooting
 
-### Problem: "Secrets scope 'linz' does not exist"
+### Secrets Configuration Issues
 
-**Solution:** You haven't created the Databricks secrets scope yet. Follow **Prerequisites → Step 3** above.
+**Error:** "Secrets scope 'linz' does not exist"
 
----
+**Resolution:** Configure Databricks Secrets following Prerequisites section above. Verify scope creation:
 
-### Problem: "WFS request failed" or "HTTP 403 Forbidden"
+```bash
+databricks secrets list-scopes --profile DEFAULT
+```
 
-**Solution:** Your LINZ API key is invalid or expired.
-1. Log in to [data.linz.govt.nz](https://data.linz.govt.nz)
-2. Check if your API key is still active
-3. Regenerate it if needed
-4. Update the secret: `databricks secrets put-secret linz api_key`
+### API Authentication Failures
 
----
+**Error:** "HTTP 403 Forbidden" or "Invalid API key"
 
-### Problem: "No features retrieved" for a layer
+**Resolution:**
+1. Validate LINZ account status at data.linz.govt.nz
+2. Regenerate API key if expired
+3. Update secret value:
+   ```bash
+   databricks secrets put-secret linz api_key --profile DEFAULT
+   ```
 
-**Solution:** The bounding box may not overlap with that layer's data. Try:
-1. Expanding the bbox (e.g., `174.0,-41.5,175.5,-41.0`)
-2. Using a different region (Auckland, Christchurch)
-3. Checking the layer ID is correct on LINZ website
+### Geometry Ingestion Issues
 
----
+**Error:** "No features retrieved" for specific layer
 
-### Problem: Notebook times out during H3 indexing
+**Resolution:**
+1. Verify bounding box overlaps layer coverage area
+2. Check layer availability on LINZ platform
+3. Validate layer ID in ingestion parameters
+4. Expand bbox if needed or select alternative region
 
-**Solution:** The dataset is large. Try:
-1. Using a larger cluster (more cores)
-2. Reducing the sample size in notebook 02 (add `.limit(1000)` after reading data)
-3. Using a coarser H3 resolution (7 instead of 9)
+### Performance Optimization
 
----
+**Issue:** H3 indexing timeout on large datasets
 
-### Problem: Kepler.gl map doesn't render
+**Resolution:**
+1. Scale cluster to larger node type or increase worker count
+2. Implement row sampling during development: `.limit(10000)`
+3. Reduce H3 resolution (e.g., resolution 7 vs 9)
+4. Enable Photon acceleration on cluster configuration
 
-**Solution:**
-1. Make sure `keplergl` is installed: `%pip install keplergl`
-2. Restart Python: `dbutils.library.restartPython()`
-3. If still broken, use the alternate display method:
+### Visualization Rendering
+
+**Issue:** Kepler.gl map not displaying
+
+**Resolution:**
+1. Verify library installation: `%pip install keplergl`
+2. Execute Python restart: `dbutils.library.restartPython()`
+3. Use alternative rendering method:
    ```python
-   html = map_1._repr_html_()
-   displayHTML(html)
+   html_output = map_1._repr_html_()
+   displayHTML(html_output)
    ```
 
 ---
 
-## Additional Resources
+## Reference Resources
 
-- **LINZ Data Service:** [https://data.linz.govt.nz](https://data.linz.govt.nz)
-- **Databricks Geospatial Guide:** [https://docs.databricks.com/sql/language-manual/sql-ref-geospatial.html](https://docs.databricks.com/sql/language-manual/sql-ref-geospatial.html)
-- **H3 Documentation:** [https://h3geo.org](https://h3geo.org)
-- **Kepler.gl Documentation:** [https://docs.kepler.gl](https://docs.kepler.gl)
-- **Databricks Genie:** [https://docs.databricks.com/genie/](https://docs.databricks.com/genie/)
+**Databricks Documentation:**
+- Geospatial Analytics: https://docs.databricks.com/sql/language-manual/sql-ref-geospatial.html
+- Unity Catalog: https://docs.databricks.com/data-governance/unity-catalog/
+- Delta Live Tables: https://docs.databricks.com/workflows/delta-live-tables/
+- Databricks Genie: https://docs.databricks.com/genie/
+
+**External Resources:**
+- LINZ Data Service: https://data.linz.govt.nz
+- H3 Spatial Index: https://h3geo.org
+- Kepler.gl: https://docs.kepler.gl
+- GeoPandas: https://geopandas.org
+
+**Transport Sector Case Studies:**
+- Transport for NSW: Traffic congestion analytics
+- DOT: Highway safety analysis
+- National road agencies: Pavement management systems
 
 ---
 
-## Support
+## Support and Engagement
 
-For questions about this demo, contact:
+**Technical Support:**
+- Databricks Solution Architect (assigned to NZTA account)
+- Field Engineering team (via SA escalation)
+- Customer Success team (post-production deployment)
 
-- **Databricks Solution Architect:** Your assigned SA for the NZTA account
-- **Field Engineering Team:** Contact through your SA
-- **LINZ Data Support:** [https://data.linz.govt.nz/about/contact/](https://data.linz.govt.nz/about/contact/)
+**LINZ Data Platform:**
+- Support portal: https://data.linz.govt.nz/about/contact/
+- Developer documentation: https://github.com/linz
 
-For issues with this repository, open an issue on GitHub or contact your Databricks representative.
+**Repository Issues:**
+- GitHub issues for this reference implementation
+- Contact Databricks account team for private repositories or customization requests
 
 ---
 
-## License
+## License and Attribution
 
-This demo uses open data from Land Information New Zealand licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
+**Data License:**
+This solution uses open data from Land Information New Zealand (LINZ) licensed under Creative Commons Attribution 4.0 International (CC BY 4.0).
 
-Databricks notebooks and code in this repository are provided for demonstration purposes. Adapt as needed for your organization.
+**Code License:**
+Databricks notebooks and Python code in this repository are provided for demonstration and reference purposes. Organizations may adapt and modify for internal use. Commercial redistribution requires separate licensing agreement.
 
 ---
 
 ## Next Steps
 
-1. ✅ Complete this demo end-to-end
-2. 📅 Schedule a follow-up session with NZTA stakeholders to review results
-3. 🗺️ Identify 2-3 pilot use cases for production (e.g., pavement condition, crash analysis)
-4. 📊 Map NZTA's existing data sources (RAMM, traffic counters, contractors)
-5. 🏗️ Design production architecture with data governance and security
-6. 🚀 Pilot implementation in Databricks production environment
-7. 📈 Scale to full national network
+### Immediate Actions (Week 1-2)
+1. Execute complete notebook sequence end-to-end
+2. Validate data quality and spatial operations accuracy
+3. Document performance metrics and cluster configurations
+4. Present findings to NZTA stakeholder group
 
-**Ready to transform NZTA's asset analytics? Let's build on Databricks Unity Catalog!**
+### Short-term Planning (Month 1-2)
+1. Conduct requirements workshop with NZTA business owners
+2. Identify 2-3 pilot use cases for production implementation
+3. Inventory existing data sources (RAMM, contractors, traffic systems)
+4. Design target-state data architecture with governance framework
+5. Develop project charter and resource plan
+
+### Production Implementation (Month 3-9)
+1. Establish production Databricks workspace with enterprise security
+2. Build automated data ingestion pipelines using Delta Live Tables
+3. Implement Unity Catalog governance policies and access controls
+4. Develop gold layer analytics tables and materialized views
+5. Create executive dashboards and operational reports
+6. Deploy predictive ML models for maintenance optimization
+7. Conduct user acceptance testing with regional managers
+8. Execute phased production rollout with monitoring
+
+### Scaling and Optimization (Month 10+)
+1. Expand to national road network coverage
+2. Integrate additional data sources (weather, traffic cameras, IoT sensors)
+3. Implement real-time analytics for incident response
+4. Deploy advanced ML capabilities (computer vision for road defects)
+5. Establish center of excellence for geospatial analytics
+
+---
+
+**For detailed implementation support or production deployment planning, contact your Databricks Solutions Architect.**
