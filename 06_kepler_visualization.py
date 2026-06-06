@@ -55,12 +55,12 @@ print("✓ Libraries loaded")
 # Load road centrelines
 print("Loading road centrelines...")
 roads_spark = spark.table(f"{catalog}.{schema}.road_centrelines")
-roads_pd = roads_spark.select("road_name", "road_type", "geom_wkt").limit(2000).toPandas()
+roads_pd = roads_spark.select("full_road_name", "road_type", "geom_wkt").limit(2000).toPandas()
 
 # Convert WKT to geometry
 roads_pd['geometry'] = roads_pd['geom_wkt'].apply(lambda x: wkt_loads(x) if x else None)
 roads_gdf = gpd.GeoDataFrame(roads_pd, geometry='geometry', crs="EPSG:4326")
-roads_gdf = roads_gdf[['road_name', 'road_type', 'geometry']]  # Keep only needed columns
+roads_gdf = roads_gdf[['full_road_name', 'road_type', 'geometry']]  # Keep only needed columns
 
 print(f"✓ Loaded {len(roads_gdf)} road centreline features")
 
@@ -134,11 +134,22 @@ map_1
 
 # COMMAND ----------
 
-# Alternative: Display using displayHTML for better notebook compatibility
-# Uncomment the following if the above doesn't render properly
+import os
 
-# html_content = map_1._repr_html_()
-# displayHTML(html_content)
+# Save map as HTML to a Unity Catalog Volume for download
+spark.sql("CREATE VOLUME IF NOT EXISTS nzta_geo_demo.linz.maps")
+
+html_content = map_1._repr_html_()
+volume_path = "/Volumes/nzta_geo_demo/linz/maps/nzta_kepler_map.html"
+
+with open(volume_path, 'wb') as f:
+    f.write(html_content if isinstance(html_content, bytes) else html_content.encode('utf-8'))
+
+size_mb = os.path.getsize(volume_path) / 1024 / 1024
+print(f"✓ Map saved to: {volume_path}")
+print(f"  Size: {size_mb:.1f} MB")
+print("\n→ Download from Catalog Explorer: nzta_geo_demo.linz.maps/nzta_kepler_map.html")
+print("  Open the HTML in your browser for full interactive Kepler.gl map.")
 
 # COMMAND ----------
 

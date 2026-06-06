@@ -22,7 +22,8 @@
 # COMMAND ----------
 
 import requests
-import geopandas as gpd
+%pip install geopandas
+
 from datetime import datetime
 import pandas as pd
 from shapely.geometry import shape
@@ -61,7 +62,7 @@ def fetch_linz_layer(layer_id, layer_name, bbox, api_key, max_features=1000):
     Args:
         layer_id: LINZ layer identifier (e.g., 'layer-3383')
         layer_name: Descriptive name for logging
-        bbox: Bounding box string (minx,miny,maxx,maxy in EPSG:4326)
+        bbox: Bounding box string (minx,miny,maxx,maxy in EPSG:4326 lon/lat order)
         api_key: LINZ API key
         max_features: Features per page (WFS limit is typically 1000)
 
@@ -73,25 +74,35 @@ def fetch_linz_layer(layer_id, layer_name, bbox, api_key, max_features=1000):
     start_index = 0
     page = 1
 
+    # Strip whitespace/newlines from API key (secrets may have trailing newline)
+    api_key = api_key.strip()
+
+    # LINZ requires key in the URL path, not as a query parameter
+    layer_url = f"https://data.linz.govt.nz/services;key={api_key}/wfs/{layer_id}"
+
+    # WFS 2.0.0 with EPSG:4326 uses lat/lon axis order for bbox
+    # Input bbox is minx,miny,maxx,maxy (lon/lat) -> convert to miny,minx,maxy,maxx (lat/lon)
+    parts = bbox.split(',')
+    bbox_latlon = f"{parts[1]},{parts[0]},{parts[3]},{parts[2]}"
+
     print(f"\nFetching {layer_name} ({layer_id})...")
 
     while True:
-        # Construct WFS request URL
+        # Construct WFS request parameters
         params = {
             'service': 'WFS',
             'version': '2.0.0',
             'request': 'GetFeature',
-            'typeNames': layer_id,
+            'typeNames': f'data.linz.govt.nz:{layer_id}',
             'outputFormat': 'application/json',
             'srsName': 'EPSG:4326',
-            'bbox': bbox,
+            'bbox': bbox_latlon,
             'startIndex': start_index,
-            'count': max_features,
-            'key': api_key
+            'count': max_features
         }
 
         try:
-            response = requests.get(wfs_base_url, params=params, timeout=30)
+            response = requests.get(layer_url, params=params, timeout=30)
             response.raise_for_status()
 
             geojson = response.json()
@@ -178,12 +189,57 @@ def save_to_delta(gdf, table_name, catalog, schema):
 # COMMAND ----------
 
 # Fetch road centrelines (layer-3383)
-roads_gdf = fetch_linz_layer(
-    layer_id='layer-3383',
-    layer_name='NZ Road Centrelines',
-    bbox=bbox,
-    api_key=linz_api_key
-)
+import geopandas as gpd
+
+api_key = linz_api_key.strip()
+layer_id = 'layer-3383'
+layer_url = f"https://data.linz.govt.nz/services;key={api_key}/wfs/{layer_id}"
+
+# WFS 2.0.0 with EPSG:4326 uses lat/lon axis order for bbox
+bbox_latlon = '-41.5,174.5,-41.0,175.0'
+
+all_features = []
+start_index = 0
+max_features = 1000
+page = 1
+
+print(f"Fetching NZ Road Centrelines ({layer_id})...")
+
+while True:
+    params = {
+        'service': 'WFS',
+        'version': '2.0.0',
+        'request': 'GetFeature',
+        'typeNames': f'data.linz.govt.nz:{layer_id}',
+        'outputFormat': 'application/json',
+        'srsName': 'EPSG:4326',
+        'bbox': bbox_latlon,
+        'startIndex': start_index,
+        'count': max_features
+    }
+
+    response = requests.get(layer_url, params=params, timeout=30)
+    response.raise_for_status()
+
+    geojson = response.json()
+    features = geojson.get('features', [])
+
+    if not features:
+        print(f"  Page {page}: No more features (total: {len(all_features)})")
+        break
+
+    all_features.extend(features)
+    print(f"  Page {page}: Retrieved {len(features)} features (total: {len(all_features)})")
+
+    if len(features) < max_features:
+        print(f"  Completed: {len(all_features)} total features")
+        break
+
+    start_index += max_features
+    page += 1
+    time.sleep(0.5)
+
+roads_gdf = gpd.GeoDataFrame.from_features(all_features, crs="EPSG:4326") if all_features else None
 
 # Save to Delta
 if roads_gdf is not None:
@@ -217,10 +273,10 @@ if addresses_gdf is not None:
 
 # COMMAND ----------
 
-# Fetch localities (layer-113761)
+# Fetch localities (layer-113764)
 localities_gdf = fetch_linz_layer(
-    layer_id='layer-113761',
-    layer_name='NZ Localities',
+    layer_id='layer-113764',
+    layer_name='NZ Suburbs and Localities',
     bbox=bbox,
     api_key=linz_api_key
 )

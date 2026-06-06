@@ -1,0 +1,22 @@
+{
+  "display_name": "NZTA Road Asset Analytics",
+  "description": "Natural language queries for NZTA road network, pavement condition, and address data. Ask questions about road types, condition scores, maintenance priorities, or address density.",
+  "warehouse_id": "01370556fad60fda",
+  "space_configuration": {
+    "data_sources": [
+      {
+        "type": "table",
+        "table_full_name": "nzta_geo_demo.linz.road_centrelines"
+      },
+      {
+        "type": "table",
+        "table_full_name": "nzta_geo_demo.linz.road_condition_by_locality"
+      },
+      {
+        "type": "table",
+        "table_full_name": "nzta_geo_demo.linz.address_points_h3"
+      }
+    ],
+    "instructions": "This space contains NZTA road asset and geospatial data. Follow these rules when generating queries:\n\n1. GEOMETRY COLUMNS: Never display geom_wkt columns directly in results. These contain long text strings that are not human-readable. Use them only for spatial functions like ST_LENGTH, ST_DISTANCE, or ST_INTERSECTS.\n\n2. CONDITION SCORES: When analyzing condition_score:\n   - 1-2 = Poor condition (urgent maintenance needed)\n   - 3 = Fair condition (monitor closely)\n   - 4-5 = Good condition (routine maintenance)\n\n3. ROAD TYPES: Common road_type values include:\n   - motorway (State Highways, controlled access)\n   - arterial (major through-roads)\n   - collector (medium-capacity roads)\n   - local (residential streets)\n\n4. H3 SPATIAL INDEX: The h3_r9 column contains hexagon IDs for spatial aggregation. Use GROUP BY h3_r9 to count features by area. Each hexagon is ~0.1 km².\n\n5. LOCALITY NAMES: Use locality_name to filter or group by suburb/area.\n\n6. When asked about 'maintenance priorities', sort by condition_score ASC (worst first).\n\n7. When asked about 'road lengths', use ST_LENGTH(ST_GEOMFROMTEXT(geom_wkt)) and divide by 1000 to get kilometers."
+  }
+}

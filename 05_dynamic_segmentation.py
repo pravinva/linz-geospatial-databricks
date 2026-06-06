@@ -52,7 +52,7 @@ print(f"Loaded {localities_df.count()} locality polygons")
 # COMMAND ----------
 
 # Show sample road data
-display(roads_df.select("road_name", "road_type", "geom_wkt").limit(5))
+display(roads_df.select("full_road_name", "road_type", "geom_wkt").limit(5))
 
 # COMMAND ----------
 
@@ -67,7 +67,7 @@ display(roads_df.select("road_name", "road_type", "geom_wkt").limit(5))
 # MAGIC -- Spatial join between roads and localities
 # MAGIC CREATE OR REPLACE TEMP VIEW roads_by_locality AS
 # MAGIC SELECT
-# MAGIC   r.road_name,
+# MAGIC   r.full_road_name as road_name,
 # MAGIC   r.road_type,
 # MAGIC   r.geom_wkt as road_geom_wkt,
 # MAGIC   l.name as locality_name,
@@ -80,7 +80,7 @@ display(roads_df.select("road_name", "road_type", "geom_wkt").limit(5))
 # MAGIC   )
 # MAGIC WHERE r.geom_wkt IS NOT NULL
 # MAGIC   AND l.geom_wkt IS NOT NULL
-# MAGIC   AND r.road_name IS NOT NULL;
+# MAGIC   AND r.full_road_name IS NOT NULL;
 
 # COMMAND ----------
 

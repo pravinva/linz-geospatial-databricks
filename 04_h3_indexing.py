@@ -21,6 +21,11 @@
 
 # COMMAND ----------
 
+# DBTITLE 1,Install dependencies
+# MAGIC %pip install geopandas h3 shapely --quiet
+
+# COMMAND ----------
+
 import geopandas as gpd
 import h3
 import pandas as pd
@@ -53,12 +58,12 @@ print(f"Loaded {addresses_df.count()} address points")
 
 # Define UDF to extract lat/lon from WKT point and compute H3 index
 def wkt_to_h3(wkt_string, resolution=9):
-    """Convert WKT Point to H3 cell at specified resolution"""
+    """Convert WKT Point to H3 cell at specified resolution (h3 v4 API)"""
     try:
         geom = wkt_loads(wkt_string)
         if geom.geom_type == 'Point':
             lat, lon = geom.y, geom.x
-            h3_index = h3.geo_to_h3(lat, lon, resolution)
+            h3_index = h3.latlng_to_cell(lat, lon, resolution)
             return h3_index
         return None
     except:
@@ -104,31 +109,37 @@ print(f"Loaded {roads_df.count()} road centreline segments")
 
 def linestring_to_h3_cells(wkt_string, resolution=9):
     """
-    Tessellate a WKT LineString into H3 cells.
-    Returns a list of H3 cell IDs that the linestring passes through.
+    Tessellate a WKT LineString/MultiLineString into H3 cells (h3 v4 API).
+    Returns a list of H3 cell IDs that the geometry passes through.
     """
     try:
         geom = wkt_loads(wkt_string)
-        if geom.geom_type != 'LineString':
+
+        # Handle both LineString and MultiLineString
+        if geom.geom_type == 'LineString':
+            lines = [geom]
+        elif geom.geom_type == 'MultiLineString':
+            lines = list(geom.geoms)
+        else:
             return []
 
         h3_cells = set()
 
-        # Sample points along the linestring
-        # Use a distance step of ~100m for resolution 9
-        length = geom.length  # in degrees
-        num_samples = max(int(length / 0.001), 10)  # At least 10 samples
+        for line in lines:
+            # Sample points along the linestring
+            length = line.length  # in degrees
+            num_samples = max(int(length / 0.001), 10)  # At least 10 samples
 
-        for i in range(num_samples + 1):
-            point = geom.interpolate(float(i) / num_samples, normalized=True)
-            h3_index = h3.geo_to_h3(point.y, point.x, resolution)
-            h3_cells.add(h3_index)
+            for i in range(num_samples + 1):
+                point = line.interpolate(float(i) / num_samples, normalized=True)
+                h3_index = h3.latlng_to_cell(point.y, point.x, resolution)
+                h3_cells.add(h3_index)
 
-        # Also index the start and end points
-        start_h3 = h3.geo_to_h3(geom.coords[0][1], geom.coords[0][0], resolution)
-        end_h3 = h3.geo_to_h3(geom.coords[-1][1], geom.coords[-1][0], resolution)
-        h3_cells.add(start_h3)
-        h3_cells.add(end_h3)
+            # Also index the start and end points
+            start_h3 = h3.latlng_to_cell(line.coords[0][1], line.coords[0][0], resolution)
+            end_h3 = h3.latlng_to_cell(line.coords[-1][1], line.coords[-1][0], resolution)
+            h3_cells.add(start_h3)
+            h3_cells.add(end_h3)
 
         return list(h3_cells)
     except Exception as e:
@@ -159,7 +170,7 @@ print(f"✓ Created road_centrelines_h3 table with {count} rows (exploded by H3 
 
 # Show sample data
 display(spark.table(f"{catalog}.{schema}.road_centrelines_h3").select(
-    "road_name", "road_type", "h3_r9", "geom_wkt"
+    "full_road_name", "road_type", "h3_r9", "geom_wkt"
 ).limit(10))
 
 # COMMAND ----------
@@ -200,13 +211,13 @@ h3_join_result = spark.sql("""
     SELECT
         a.full_address,
         a.suburb_locality,
-        r.road_name,
+        r.full_road_name,
         r.road_type,
         a.h3_r9
     FROM address_points_h3 a
     INNER JOIN road_centrelines_h3 r
         ON a.h3_r9 = r.h3_r9
-    WHERE r.road_name IS NOT NULL
+    WHERE r.full_road_name IS NOT NULL
 """)
 
 h3_count = h3_join_result.count()
@@ -230,7 +241,7 @@ spatial_join_result = spark.sql("""
     SELECT
         a.full_address,
         a.suburb_locality,
-        r.road_name,
+        r.full_road_name,
         r.road_type
     FROM address_points a
     INNER JOIN road_centrelines r
@@ -238,7 +249,7 @@ spatial_join_result = spark.sql("""
             ST_BUFFER(ST_GEOMFROMTEXT(r.geom_wkt), 0.001),  -- ~100m buffer
             ST_GEOMFROMTEXT(a.geom_wkt)
         )
-    WHERE r.road_name IS NOT NULL
+    WHERE r.full_road_name IS NOT NULL
     LIMIT 1000
 """)
 

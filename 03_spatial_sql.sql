@@ -36,7 +36,7 @@ USE SCHEMA linz;
 SELECT
   road_type,
   COUNT(*) as segment_count,
-  ROUND(SUM(ST_LENGTH(ST_GEOMFROMTEXT(geom_wkt))) / 1000, 2) as total_km
+  ROUND(SUM(ST_LENGTH(ST_TRANSFORM(ST_GEOMFROMTEXT(geom_wkt), 'EPSG:4326', 'EPSG:2193'))) / 1000, 2) as total_km
 FROM road_centrelines
 WHERE geom_wkt IS NOT NULL
   AND road_type IS NOT NULL
@@ -62,7 +62,7 @@ WITH wellington_cbd AS (
 ),
 nearby_roads AS (
   SELECT
-    r.road_name,
+    r.full_road_name as road_name,
     r.road_type,
     ST_GEOMFROMTEXT(r.geom_wkt) as road_geom
   FROM road_centrelines r
@@ -96,8 +96,8 @@ LIMIT 100;
 SELECT
   l.name as locality_name,
   COUNT(DISTINCT a.full_address) as address_count,
-  ROUND(ST_AREA(ST_GEOMFROMTEXT(l.geom_wkt)) / 1000000, 2) as area_sq_km,
-  ROUND(COUNT(DISTINCT a.full_address) / (ST_AREA(ST_GEOMFROMTEXT(l.geom_wkt)) / 1000000), 0) as addresses_per_sq_km
+  ROUND(ST_AREA(ST_TRANSFORM(ST_GEOMFROMTEXT(l.geom_wkt), 'EPSG:4326', 'EPSG:2193')) / 1000000, 2) as area_sq_km,
+  ROUND(COUNT(DISTINCT a.full_address) / (ST_AREA(ST_TRANSFORM(ST_GEOMFROMTEXT(l.geom_wkt), 'EPSG:4326', 'EPSG:2193')) / 1000000), 0) as addresses_per_sq_km
 FROM localities l
 LEFT JOIN address_points a
   ON ST_INTERSECTS(ST_GEOMFROMTEXT(a.geom_wkt), ST_GEOMFROMTEXT(l.geom_wkt))
@@ -120,14 +120,14 @@ LIMIT 20;
 -- COMMAND ----------
 
 SELECT
-  road_name,
+  full_road_name as road_name,
   road_type,
-  ROUND(ST_LENGTH(ST_GEOMFROMTEXT(geom_wkt)) / 1000, 2) as length_km,
+  ROUND(ST_LENGTH(ST_TRANSFORM(ST_GEOMFROMTEXT(geom_wkt), 'EPSG:4326', 'EPSG:2193')) / 1000, 2) as length_km,
   geom_wkt
 FROM road_centrelines
 WHERE geom_wkt IS NOT NULL
-  AND road_name IS NOT NULL
-ORDER BY ST_LENGTH(ST_GEOMFROMTEXT(geom_wkt)) DESC
+  AND full_road_name IS NOT NULL
+ORDER BY ST_LENGTH(ST_TRANSFORM(ST_GEOMFROMTEXT(geom_wkt), 'EPSG:4326', 'EPSG:2193')) DESC
 LIMIT 10;
 
 -- COMMAND ----------
@@ -143,14 +143,14 @@ LIMIT 10;
 
 WITH road_locality_intersections AS (
   SELECT
-    r.road_name,
+    r.full_road_name as road_name,
     r.road_type,
     l.name as locality_name,
     ST_GEOMFROMTEXT(r.geom_wkt) as road_geom
   FROM road_centrelines r
   INNER JOIN localities l
     ON ST_INTERSECTS(ST_GEOMFROMTEXT(r.geom_wkt), ST_GEOMFROMTEXT(l.geom_wkt))
-  WHERE r.road_name IS NOT NULL
+  WHERE r.full_road_name IS NOT NULL
     AND l.name IS NOT NULL
     AND r.geom_wkt IS NOT NULL
 )
