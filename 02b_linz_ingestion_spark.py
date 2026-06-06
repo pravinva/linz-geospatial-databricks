@@ -30,6 +30,7 @@ import tempfile
 from datetime import datetime
 from pyspark.sql.functions import col, lit, current_timestamp, input_file_name, explode, to_json
 from pyspark.sql.types import StructType, StructField, StringType, DoubleType, IntegerType, ArrayType
+import time
 
 # Configuration
 catalog = "nzta_geo_demo"
@@ -40,11 +41,8 @@ spark.sql(f"USE SCHEMA {schema}")
 # Retrieve LINZ API key
 linz_api_key = dbutils.secrets.get(scope="linz", key="api_key")
 
-# Wellington bounding box (EPSG:4326)
+# Wellington bounding box (EPSG:4326 - lon/lat order for input)
 bbox = "174.5,-41.5,175.0,-41.0"
-
-# LINZ WFS base URL
-wfs_base_url = "https://data.linz.govt.nz/services/wfs"
 
 print("✓ Configuration loaded")
 print(f"  Target: {catalog}.{schema}")
@@ -70,7 +68,7 @@ def fetch_linz_layer_spark(layer_id, layer_name, bbox, api_key, max_features=100
     Args:
         layer_id: LINZ layer identifier (e.g., 'layer-3383')
         layer_name: Descriptive name for logging
-        bbox: Bounding box string (minx,miny,maxx,maxy in EPSG:4326)
+        bbox: Bounding box string (minx,miny,maxx,maxy in EPSG:4326 lon/lat order)
         api_key: LINZ API key
         max_features: Features per page (WFS limit is typically 1000)
 
@@ -78,29 +76,39 @@ def fetch_linz_layer_spark(layer_id, layer_name, bbox, api_key, max_features=100
         Spark DataFrame with all features from the layer
     """
 
-    print(f"\nFetching {layer_name} ({layer_id})...")
-
     all_features = []
     start_index = 0
     page = 1
 
+    # Strip whitespace/newlines from API key (secrets may have trailing newline)
+    api_key = api_key.strip()
+
+    # LINZ requires key in the URL path, not as a query parameter
+    layer_url = f"https://data.linz.govt.nz/services;key={api_key}/wfs/{layer_id}"
+
+    # WFS 2.0.0 with EPSG:4326 uses lat/lon axis order for bbox
+    # Input bbox is minx,miny,maxx,maxy (lon/lat) -> convert to miny,minx,maxy,maxx (lat/lon)
+    parts = bbox.split(',')
+    bbox_latlon = f"{parts[1]},{parts[0]},{parts[3]},{parts[2]}"
+
+    print(f"\nFetching {layer_name} ({layer_id})...")
+
     while True:
-        # Construct WFS request URL
+        # Construct WFS request parameters
         params = {
             'service': 'WFS',
             'version': '2.0.0',
             'request': 'GetFeature',
-            'typeNames': layer_id,
+            'typeNames': f'data.linz.govt.nz:{layer_id}',
             'outputFormat': 'application/json',
             'srsName': 'EPSG:4326',
-            'bbox': bbox,
+            'bbox': bbox_latlon,
             'startIndex': start_index,
-            'count': max_features,
-            'key': api_key
+            'count': max_features
         }
 
         try:
-            response = requests.get(wfs_base_url, params=params, timeout=30)
+            response = requests.get(layer_url, params=params, timeout=30)
             response.raise_for_status()
 
             geojson = response.json()
@@ -120,6 +128,9 @@ def fetch_linz_layer_spark(layer_id, layer_name, bbox, api_key, max_features=100
 
             start_index += max_features
             page += 1
+
+            # Small delay to be respectful to the API
+            time.sleep(0.5)
 
         except requests.exceptions.RequestException as e:
             print(f"  Error fetching page {page}: {e}")
@@ -187,21 +198,12 @@ if roads_df is not None:
     print(f"\nRoad centrelines schema:")
     roads_df.printSchema()
 
+    # Register temp view
+    roads_df.createOrReplaceTempView("roads_staging")
+
     # Convert GeoJSON geometry to WKT using Spark SQL
     # ST_GEOMFROMGEOJSON parses the geometry JSON natively in Spark
     # ST_ASWKT converts to Well-Known Text for storage
-    roads_with_geom = spark.sql("""
-        SELECT
-            *,
-            ST_ASWKT(ST_GEOMFROMGEOJSON(to_json(geometry_json))) as geom_wkt,
-            current_timestamp() as ingestion_timestamp
-        FROM roads_staging
-    """)
-
-    # Register temp view first
-    roads_df.createOrReplaceTempView("roads_staging")
-
-    # Convert and write to Delta
     roads_with_geom = spark.sql("""
         SELECT
             *,
@@ -333,3 +335,8 @@ print("- All geometry parsing done in Spark distributed engine")
 print("- No single-node GeoPandas bottleneck")
 print("- Suitable for national-scale datasets")
 print("- Delta table writes use Spark native optimizations")
+print("\nProduction Enhancements Applied:")
+print("✓ API key stripped of whitespace (handles secret formatting)")
+print("✓ Key embedded in URL path (LINZ API requirement)")
+print("✓ Bbox converted from lon/lat to lat/lon (WFS 2.0 EPSG:4326)")
+print("✓ Full typeNames prefix for layer identification")
